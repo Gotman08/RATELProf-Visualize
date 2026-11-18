@@ -373,13 +373,13 @@
     }
 
     const memopMap = {
-        0: "__amd_rocclr_fillBufferAligned",
-        1: "__amd_rocclr_fillBufferAligned2D",
-        2: "__amd_rocclr_copyBuffer",
-        3: "__amd_rocclr_copyBufferAligned",
-        4: "__amd_rocclr_copyBufferRect",
-        5: "__amd_rocclr_copyBufferRectAligned",
-        6: "SDMA Transfer",
+        1: "__amd_rocclr_fillBufferAligned",
+        2: "__amd_rocclr_fillBufferAligned2D",
+        3: "__amd_rocclr_copyBuffer",
+        4: "__amd_rocclr_copyBufferAligned",
+        5: "__amd_rocclr_copyBufferRect",
+        6: "__amd_rocclr_copyBufferRectAligned",
+        7: "SDMA Transfer",
     }
 
     function onEventClick(event, group, track, callchainEvents) {
@@ -504,7 +504,7 @@
 
         } else if (domain_mode == 0) {
             append(rcol, "Memory Operation",   memopMap[metadata.memop] || `Unknown (${metadata.memop})`);
-            if (metadata.memop != 6) {
+            if (metadata.memop != 7) {
               dispatchTime = args.at(-2);
               const queue_time = trace.start - dispatchTime; 
               append(rcol, "Dispatch Time",  formatTime(dispatchTime));
