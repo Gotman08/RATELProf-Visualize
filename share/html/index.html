@@ -47,7 +47,7 @@
   </div>
   <div class="grid-item">
     <div class="grid-header">
-      <span>GPU Nodes</span>
+      <span id="gpu-title">GPU Nodes</span>
       <select id="gpu-select"></select>
     </div>
     <div id="gpu-table" class="scrollable"></div>
@@ -60,25 +60,28 @@
 
 <script>
 
-function fillGPUTable(tableId, data) {
+function fillGPUTable(tableId, data, machine) {
     const container = document.getElementById(tableId);
 
     // Populate GPU select options
     const select = document.getElementById('gpu-select');
-    Object.keys(data).forEach(id => {
+    Object.keys(data[machine]).forEach(id => {
         const option = document.createElement('option');
         option.textContent = `GPU ${id}`;
         option.value = id;
         select.appendChild(option);
     });
 
+    const gpuTitle = document.getElementById('gpu-title');
+    gpuTitle.textContent = `GPU Nodes - ${machine}`;
+
 
     function updateTable(selectedValue) {
-        const newData = data[selectedValue];
+        const newData = data[machine][selectedValue];
         if (!newData) return;
 
         const script = document.createElement("script");
-        script.src = "data/gpus/"+newData;
+        script.src = "data/gpus/"+machine+"/"+newData;
 
         script.onload = () => {
             container.innerHTML = "";
@@ -133,8 +136,41 @@ function fillTable(tableId, rows) {
 
 fillTable("profiling-table", __SUMMARY_DATA__.PROFILING.rows)
 fillTable("experiment-table", __SUMMARY_DATA__.EXPERIMENT.rows)
-fillGPUTable("gpu-table", __SUMMARY_DATA__.GPU)
 
+
+const table = document.getElementById("experiment-table");
+const rows = table.querySelectorAll("tr");
+
+rows.forEach(row => {
+    const cells = row.querySelectorAll("td");
+
+    if (cells.length >= 2 && cells[0].textContent.trim() === "Machine(s)") {
+        const machines = (cells[1].title || cells[1].textContent)
+            .split(",")
+            .map(item => item.trim())
+            .filter(item => item !== "");
+
+        // Clear original text
+        cells[1].textContent = "";
+
+        // Create clickable chips
+        machines.forEach(machine => {
+            const chip = document.createElement("span");
+
+            chip.textContent = machine;
+            chip.className = "chip";
+            chip.addEventListener("click", () => {
+                fillGPUTable("gpu-table", __SUMMARY_DATA__.GPU, machine);
+            });
+
+            cells[1].appendChild(chip);
+        });
+    }
+});
+
+// Default to the first machine in the list
+const firstMachine = Object.keys(__SUMMARY_DATA__.GPU)[0];
+fillGPUTable("gpu-table", __SUMMARY_DATA__.GPU, firstMachine);
 
 
 const container = document.getElementById('grid-container');
