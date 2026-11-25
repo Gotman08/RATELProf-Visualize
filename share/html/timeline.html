@@ -372,6 +372,104 @@
       return html;
     }
 
+    /* ------------------------------------------------------------------ */
+    /* Vendor specific decoding (window.RPROF_VENDOR is set by data/misc.js) */
+    /* ------------------------------------------------------------------ */
+    const IS_NVIDIA = (window.RPROF_VENDOR === "NVIDIA");
+
+    const nvMemopMap = {
+        1: "CUDA memset",
+        2: "CUDA memset",
+        3: "CUDA memcpy",
+        4: "CUDA memcpy (peer-to-peer)",
+    }
+    const nvCopyKind = {
+        0: "Unknown", 1: "Host to Device", 2: "Device to Host", 3: "Host to Array",
+        4: "Array to Host", 5: "Array to Array", 6: "Array to Device", 7: "Device to Array",
+        8: "Device to Device", 9: "Host to Host", 10: "Peer to Peer",
+    }
+    const nvMemoryKind = {
+        0: "Unknown", 1: "Pageable", 2: "Pinned", 3: "Device", 4: "Array",
+        5: "Managed", 6: "Device Static", 7: "Managed Static",
+    }
+    const nvSyncType = {
+        0: "Unknown", 1: "Event Synchronize", 2: "Stream Wait Event",
+        3: "Stream Synchronize", 4: "Context / Device Synchronize",
+    }
+    const nvLaunchType = {
+        0: "Regular", 1: "Cooperative (single device)", 2: "Cooperative (multi device)", 3: "Command list",
+    }
+    const nvCacheConfig = {
+        0: "No preference", 1: "Prefer shared", 2: "Prefer L1", 3: "Prefer equal",
+    }
+
+    function showNvidiaTraceDetails(trace, domain_mode, metadata, args, lcol, rcol, append) {
+        let dispatchTime;
+        if (domain_mode == 1) {
+            // [corr, dispatch, block, grid, submitted, regs, static smem, dynamic smem,
+            //  local mem/thread, local mem total, cluster, launch type, context,
+            //  graph node, cache config requested, cache config executed, smem config]
+            dispatchTime = args[1];
+            const threads = args[2][0] * args[2][1] * args[2][2];
+            const blocks  = args[3][0] * args[3][1] * args[3][2];
+            append(lcol, "Queued Time",            formatTime(dispatchTime));
+            append(lcol, "Queue Duration",         formatTime(trace.start - dispatchTime));
+            if (args[4]) {
+                append(lcol, "Submitted Time",     formatTime(args[4]));
+                append(lcol, "Submit to Start",    formatTime(trace.start - args[4]));
+            }
+            append(rcol, "Block Dimension",        `[${args[2].join(", ")}] (${threads} threads)`);
+            append(rcol, "Grid Dimension",         `[${args[3].join(", ")}] (${blocks} blocks)`);
+            if (args[10] && (args[10][0] || args[10][1] || args[10][2]))
+                append(rcol, "Cluster Dimension",  `[${args[10].join(", ")}]`);
+            append(rcol, "Registers / Thread",     args[5]);
+            append(rcol, "Static Shared Memory",   formatBytes(args[6]));
+            append(rcol, "Dynamic Shared Memory",  formatBytes(args[7]));
+            append(rcol, "Local Memory / Thread",  formatBytes(args[8]) + (args[8] > 0 ? " (stack / register spills)" : ""));
+            append(rcol, "Local Memory Total",     formatBytes(args[9]));
+            append(rcol, "Launch Type",            nvLaunchType[args[11]] || `Unknown (${args[11]})`);
+            append(rcol, "Cache Config",           `${nvCacheConfig[args[14]] || args[14]} -> ${nvCacheConfig[args[15]] || args[15]}`);
+            append(rcol, "CUDA Context",           args[12]);
+            if (args[13]) append(rcol, "Graph Node", args[13]);
+            append(rcol, "CUPTI Correlation ID",   args[0]);
+        } else if (domain_mode == 0) {
+            append(rcol, "Memory Operation",   nvMemopMap[metadata.memop] || `Unknown (${metadata.memop})`);
+            if (metadata.memop == 1 || metadata.memop == 2) {
+                // [corr, size, value, memory kind, async, context, graph node]
+                append(rcol, "Size set",       formatBytes(args[1]));
+                append(rcol, "Value",          args[2]);
+                append(rcol, "Memory Kind",    nvMemoryKind[args[3]] || args[3]);
+                append(rcol, "Asynchronous",   args[4] ? "Yes" : "No");
+                append(rcol, "CUDA Context",   args[5]);
+                if (args[6]) append(rcol, "Graph Node", args[6]);
+            } else {
+                // [corr, size, other handle, copy kind, src kind, dst kind, async, context, graph node]
+                const bw = trace.dur > 0 ? (args[1] / trace.dur) : 0; // bytes / ns = GB/s
+                append(rcol, "Size transferred",   formatBytes(args[1]));
+                append(rcol, "Throughput",         `${bw.toFixed(2)} GB/s`);
+                append(rcol, "Copy Kind",          nvCopyKind[args[3]] || args[3]);
+                append(rcol, "Source Memory",      nvMemoryKind[args[4]] || args[4]);
+                append(rcol, "Destination Memory", nvMemoryKind[args[5]] || args[5]);
+                append(rcol, "Asynchronous",       args[6] ? "Yes" : "No");
+                append(rcol, "Other handle",       formatAddr(args[2]));
+                append(rcol, "CUDA Context",       args[7]);
+                if (args[8]) append(rcol, "Graph Node", args[8]);
+                if (args[4] == 1 || args[5] == 1)
+                    append(lcol, "Note", "Pageable host memory: the copy is staged and synchronous for the host");
+            }
+            append(rcol, "CUPTI Correlation ID",   args[0]);
+        } else if (domain_mode == 3) {
+            // [corr, start, sync type, cuda event id, context]
+            append(rcol, "Synchronization",   nvSyncType[args[2]] || `Unknown (${args[2]})`);
+            if (args[3] != 4294967295) append(rcol, "CUDA Event", args[3]);
+            append(rcol, "CUDA Context",      args[4]);
+            append(rcol, "CUPTI Correlation ID", args[0]);
+        } else {
+            return false;
+        }
+        return dispatchTime;
+    }
+
     const memopMap = {
         1: "__amd_rocclr_fillBufferAligned",
         2: "__amd_rocclr_fillBufferAligned2D",
@@ -489,7 +587,12 @@
         append(rcol, group.label,              group.value);
         append(rcol, track.label,              track.value);
 
-        if (domain_mode == 1) {
+        if (IS_NVIDIA && (domain_mode == 0 || domain_mode == 1 || domain_mode == 3)) {
+            dispatchTime = showNvidiaTraceDetails(trace, domain_mode, metadata, args, lcol, rcol, append);
+            if (domain_mode == 1) {
+                append(rcol, "Kernel Handle",  formatAddr(metadata.kernel_data.object));
+            }
+        } else if (domain_mode == 1) {
             dispatchTime = args[1];
             const queue_time = trace.start - dispatchTime; 
             append(lcol, "Dispatch Time",          formatTime(dispatchTime));
